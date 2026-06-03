@@ -17,18 +17,48 @@ from utils.utils import load_json
 
 class EmoRec:
     def __init__(self, hse_name="enet_b2_8", device='cuda'):
+        import torch
         from facenet_pytorch import MTCNN
         from hsemotion.facial_emotions import HSEmotionRecognizer
+
+        if device.startswith('cuda') and not torch.cuda.is_available():
+            device = 'cpu'
+
         self.mtcnn = MTCNN(keep_all=False, post_process=False, min_face_size=40, device=device)
-        self.fer=HSEmotionRecognizer(model_name=hse_name, device=device)
+
+        if device == 'cpu':
+            orig_torch_load = torch.load
+
+            def torch_load_cpu(*args, **kwargs):
+                kwargs.setdefault('map_location', torch.device('cpu'))
+                return orig_torch_load(*args, **kwargs)
+
+            torch.load = torch_load_cpu
+            try:
+                self.fer=HSEmotionRecognizer(model_name=hse_name, device=device)
+            finally:
+                torch.load = orig_torch_load
+        else:
+            self.fer=HSEmotionRecognizer(model_name=hse_name, device=device)
+
+        for module in self.fer.model.modules():
+            if module.__class__.__name__ in {'DepthwiseSeparableConv', 'InvertedResidual'}:
+                if not hasattr(module, 'conv_s2d'):
+                    module.conv_s2d = None
+                if not hasattr(module, 'aa'):
+                    module.aa = torch.nn.Identity()
 
     def _detect_face(self, frame):
         bounding_boxes, probs = self.mtcnn.detect(frame, landmarks=False)
+        if bounding_boxes is None or probs is None:
+            return np.empty((0, 4))
         bounding_boxes=bounding_boxes[probs>0.9]
         return bounding_boxes
 
     def _run_one_image(self, img_rgb_uint8):
         bounding_boxes = self._detect_face(img_rgb_uint8)
+        if len(bounding_boxes) == 0:
+            raise ValueError("no face detected")
         bbox = bounding_boxes[0]
         box = bbox.astype(int)
         x1,y1,x2,y2 = box[0:4]
