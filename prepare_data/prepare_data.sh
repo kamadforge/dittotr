@@ -1,8 +1,6 @@
 set -euo pipefail
 # set -x
 
-conda activate ditto_train
-
 SECONDS=0
 
 DITTO_ROOT_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
@@ -11,13 +9,20 @@ DITTO_PYTORCH_PATH="${DITTO_ROOT_DIR}/checkpoints/ditto_pytorch"
 HUBERT_ONNX="${DITTO_PYTORCH_PATH}/aux_models/hubert_streaming_fix_kv.onnx"
 MP_FACE_LMK_TASK="${DITTO_PYTORCH_PATH}/aux_models/face_landmarker.task"
 
+NUMBA_CACHE_DIR="${DITTO_ROOT_DIR}/.numba_cache"
+mkdir -p "${NUMBA_CACHE_DIR}"
+export NUMBA_CACHE_DIR
 
 cd "${DITTO_ROOT_DIR}/prepare_data"
 
 
-data_info_json="$1"
-data_list_json="$2"
-data_preload_pkl="$3"
+data_info_json="$(readlink -f "$1")"
+data_list_json="$(readlink -f "$2")"
+data_preload_pkl="$(readlink -f "$3")"
+export DATA_PRELOAD_PKL="${data_preload_pkl}"
+
+# avoid loading a stale/empty preload from previous failed runs
+rm -f "${data_preload_pkl}"
 
 
 # check ckpt
@@ -73,6 +78,18 @@ python scripts/preload_train_data_to_pkl.py \
     --use_eye_open \
     --use_eye_ball \
     --motion_feat_dim 265 \
+
+python - <<'PY'
+import pickle, os, sys
+pkl = os.environ["DATA_PRELOAD_PKL"]
+if not os.path.isfile(pkl):
+    sys.exit(f"[prepare_data] data_preload_pkl not found: {pkl}")
+v_list, idx_map = pickle.load(open(pkl, "rb"))
+num_v, num_seq = len(v_list), len(idx_map)
+if num_v == 0 or num_seq == 0:
+    sys.exit(f"[prepare_data] data_preload_pkl empty (num_v={num_v}, num_seq={num_seq}). Check earlier logs.")
+print(f"[prepare_data] data_preload_pkl ok (num_v={num_v}, num_seq={num_seq})")
+PY
 
 
 cd "${DITTO_ROOT_DIR}"
