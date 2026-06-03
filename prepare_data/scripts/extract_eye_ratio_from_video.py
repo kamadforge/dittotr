@@ -204,8 +204,32 @@ def det_mp_lmks_for_video(video, MP: MediaPipeUtils, npy='', flip=False):
         im_rbg = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)            
         det = MP.detect_from_npimage(im_rbg)
         lmk = MP.mplmk_to_nplmk(det)   # [1, 478, 3]
+        if lmk.shape != (1, 478, 3):
+            lmk = None
         lmk_list.append(lmk)
     cap.release()
+
+    if not lmk_list:
+        raise ValueError(f"no frames read from video: {video}")
+
+    valid_lmks = [lmk for lmk in lmk_list if lmk is not None]
+    if not valid_lmks:
+        raise ValueError(f"no face landmarks detected in video: {video}")
+
+    next_valid = [None] * len(lmk_list)
+    nxt = None
+    for i in range(len(lmk_list) - 1, -1, -1):
+        if lmk_list[i] is not None:
+            nxt = lmk_list[i]
+        next_valid[i] = nxt
+
+    last = None
+    for i, lmk in enumerate(lmk_list):
+        if lmk is not None:
+            last = lmk
+            continue
+        replacement = last if last is not None else next_valid[i]
+        lmk_list[i] = replacement.copy()
 
     lmks = np.concatenate(lmk_list, 0)    # [n, 478, 3]
     if npy:
@@ -281,7 +305,8 @@ def process_data_list(video_list, lmk_npy_list, eye_open_npy_list, eye_ball_npy_
                 lmks = det_mp_lmks_for_video(video, MP, npy=lmk_npy, flip=flip_lmk_flag)
             else:
                 lmks = np.load(lmk_npy)
-            lmks_to_eye_attr(lmks, open_npy=eye_open_npy, ball_npy=eye_ball_npy)
+            if not os.path.isfile(eye_open_npy) or not os.path.isfile(eye_ball_npy):
+                lmks_to_eye_attr(lmks, open_npy=eye_open_npy, ball_npy=eye_ball_npy)
         except:
             traceback.print_exc()
         
