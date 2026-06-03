@@ -8,6 +8,7 @@ import traceback
 import imageio
 from tqdm import tqdm
 import cv2
+import subprocess
 
 import sys
 CUR_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -265,10 +266,31 @@ def crop_one_v2(video, res_video, cropper=None):
     crop_v2(cropper, video, res_video, with_audio=True)
 
 
+def is_valid_video(video):
+    if not os.path.isfile(video) or os.path.getsize(video) == 0:
+        return False
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        video,
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    return result.returncode == 0 and "video" in result.stdout
+
+
 def process_data_list(ori_video_list, res_video_list, ditto_pytorch_path):
     cropper = init_cropper(ditto_pytorch_path)
     for video, res_video in tzip(ori_video_list, res_video_list):
         try:
+            if is_valid_video(res_video):
+                continue
             crop_one(video, res_video, cropper)
         except:
             traceback.print_exc()
